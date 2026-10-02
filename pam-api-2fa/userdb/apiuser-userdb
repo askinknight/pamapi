@@ -1,0 +1,81 @@
+#!/bin/bash
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+BASE=1000000000
+REG=/var/lib/apiusers
+SERVICE=io.local.apiuser
+NAME_RE='^[a-z0-9_][a-z0-9_.+-]{0,62}(@[a-z0-9][a-z0-9.-]{0,62})?$'
+
+send() {
+    printf '%s\0' "$1"
+}
+
+no_record() {
+    send '{"error":"io.systemd.UserDatabase.NoRecordFound"}'
+}
+
+uid_for_name() {
+    local digest
+    digest=$(printf '%s' "$1" | md5sum) || return 1
+    digest=${digest:0:7}
+    printf '%s' "$((BASE + 16#$digest))"
+}
+
+user_record() {
+    jq -nc --arg name "$1" --argjson uid "$2" --arg service "$SERVICE" \
+        '{parameters:{record:{userName:$name,uid:$uid,gid:$uid,realName:$name,homeDirectory:("/home/"+$name),shell:"/bin/bash",disposition:"regular",service:$service},incomplete:false}}'
+}
+
+group_record() {
+    jq -nc --arg name "$1" --argjson gid "$2" --arg service "$SERVICE" \
+        '{parameters:{record:{groupName:$name,gid:$gid,disposition:"regular",service:$service},incomplete:false}}'
+}
+
+while IFS= read -r -d '' message; do
+    method=$(jq -r '.method // ""' <<<"$message") || { no_record; continue; }
+    username=$(jq -r '.parameters.userName // ""' <<<"$message") || username=
+    uid=$(jq -r '.parameters.uid // ""' <<<"$message") || uid=
+    groupname=$(jq -r '.parameters.groupName // ""' <<<"$message") || groupname=
+    gid=$(jq -r '.parameters.gid // ""' <<<"$message") || gid=
+
+    case "$method" in
+        *GetUserRecord)
+            if [[ $username =~ $NAME_RE ]]; then
+                id=$(uid_for_name "$username") || { no_record; continue; }
+                user_record "$username" "$id" | { IFS= read -r record; send "$record"; }
+            elif [[ $uid =~ ^[0-9]+$ && -f $REG/$uid && ! -L $REG/$uid ]]; then
+                registered_name=$(<"$REG/$uid")
+                if [[ $registered_name =~ $NAME_RE ]]; then
+                    user_record "$registered_name" "$uid" | { IFS= read -r record; send "$record"; }
+                else
+                    no_record
+                fi
+            else
+                no_record
+            fi
+            ;;
+        *GetGroupRecord)
+            if [[ $groupname =~ $NAME_RE ]]; then
+                id=$(uid_for_name "$groupname") || { no_record; continue; }
+                group_record "$groupname" "$id" | { IFS= read -r record; send "$record"; }
+            elif [[ $gid =~ ^[0-9]+$ && -f $REG/$gid && ! -L $REG/$gid ]]; then
+                registered_name=$(<"$REG/$gid")
+                if [[ $registered_name =~ $NAME_RE ]]; then
+                    group_record "$registered_name" "$gid" | { IFS= read -r record; send "$record"; }
+                else
+                    no_record
+                fi
+            else
+                no_record
+            fi
+            ;;
+        *GetMemberships)
+            no_record
+            ;;
+        *)
+            send '{"error":"org.varlink.service.MethodNotFound"}'
+            ;;
+    esac
+done

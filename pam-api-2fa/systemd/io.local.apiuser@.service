@@ -1,0 +1,18 @@
+[Unit]
+Description=API virtual user database connection
+
+[Service]
+ExecStart=/usr/sbin/apiuser-userdb
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX

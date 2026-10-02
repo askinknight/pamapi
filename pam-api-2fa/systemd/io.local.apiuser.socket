@@ -1,0 +1,10 @@
+[Unit]
+Description=API virtual user database socket
+
+[Socket]
+ListenStream=/run/systemd/userdb/io.local.apiuser
+Accept=yes
+SocketMode=0666
+
+[Install]
+WantedBy=sockets.target
